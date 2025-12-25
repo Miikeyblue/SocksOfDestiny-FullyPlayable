@@ -542,17 +542,71 @@ function buildTriviaDeck(bankLen) {
 
 function nextTriviaQuestion(isKid) {
   const bank = isKid ? KIDS_TRIVIA : ADULT_TRIVIA;
-  const deckKey = isKid ? "triviaDeckKids" : "triviaDeckAdult";
 
-  if (!state[deckKey] || !Array.isArray(state[deckKey]) || state[deckKey].length === 0) {
-    // Fresh deck: guarantees zero repeats until exhausted
-    state[deckKey] = buildTriviaDeck(bank.length);
+  // Balanced category draw: round-robin across categories (no repeats until a category is exhausted)
+  const cycleKey = isKid ? "triviaCatCycleKids" : "triviaCatCycleAdult";
+  const decksKey  = isKid ? "triviaCatDecksKids" : "triviaCatDecksAdult";
+
+  const preferredOrder = ["General Knowledge","Movies","Music","Maths"];
+
+  function buildDecks() {
+    const decks = {};
+    for (let i = 0; i < bank.length; i++) {
+      const cat = (bank[i] && bank[i].category) ? bank[i].category : "Trivia";
+      if (!decks[cat]) decks[cat] = [];
+      decks[cat].push(i);
+    }
+    // Shuffle each category's indices
+    Object.keys(decks).forEach(cat => {
+      for (let i = decks[cat].length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = decks[cat][i];
+        decks[cat][i] = decks[cat][j];
+        decks[cat][j] = tmp;
+      }
+    });
+    state[decksKey] = decks;
+    state[cycleKey] = 0;
     saveState();
   }
 
-  const idx = state[deckKey].pop();
+  if (!state[decksKey] || typeof state[decksKey] !== "object") buildDecks();
+
+  // Determine active categories (preferred order first, then any extras)
+  const decks = state[decksKey];
+  const extras = Object.keys(decks).filter(c => !preferredOrder.includes(c));
+  const cats = preferredOrder.concat(extras);
+
+  // If everything is exhausted, rebuild from scratch (still zero repeats until next exhaustion)
+  const anyLeft = cats.some(c => Array.isArray(decks[c]) && decks[c].length > 0);
+  if (!anyLeft) {
+    buildDecks();
+  }
+
+  // Round-robin pick: find next category with questions remaining
+  let start = Number.isInteger(state[cycleKey]) ? state[cycleKey] : 0;
+  let pickedCat = null;
+  for (let step = 0; step < cats.length; step++) {
+    const idx = (start + step) % cats.length;
+    const c = cats[idx];
+    if (Array.isArray(decks[c]) && decks[c].length > 0) {
+      pickedCat = c;
+      state[cycleKey] = (idx + 1) % cats.length;
+      saveState();
+      break;
+    }
+  }
+
+  // Fallback: should never happen, but keep the game safe
+  if (!pickedCat) {
+    // Hard rebuild and pick again
+    buildDecks();
+    return nextTriviaQuestion(isKid);
+  }
+
+  const qIndex = decks[pickedCat].pop();
   saveState();
-  return bank[idx];
+  return bank[qIndex];
 }
 
 // ---------- Trivia ----------
